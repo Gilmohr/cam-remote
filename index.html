@@ -61,6 +61,7 @@
 
 <script>
 "use strict";
+const APP_VERSION = "v3 (2026-10-25 16:55, lange UUIDs)";
 const NUM_CAMS = 4;
 const SVC = "0000fff0-0000-1000-8000-00805f9b34fb";
 const CH_NOTIFY = "0000fff4-0000-1000-8000-00805f9b34fb";
@@ -273,7 +274,9 @@ $("allStart").onclick = () => Promise.all(cams.filter(c => c.ready).map(c => rec
 $("allStop").onclick  = () => Promise.all(cams.filter(c => c.ready).map(c => record(c, false)));
 
 if (!navigator.bluetooth) $("nobt").style.display = "block";
-render(); selfTest();
+render();
+log("Version " + APP_VERSION);
+selfTest();
 log("Bereit. Kamera einschalten, dann „Verbinden“ tippen.");
 </script>
 </body>
