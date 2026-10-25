@@ -62,6 +62,7 @@
     <button id="p2" class="small">Vorlage: Stopp</button>
     <button id="p3" class="small">Vorlage: Foto</button>
     <button id="pPair" class="small">Pairing senden</button>
+    <button id="auto" class="small conn" style="grid-column:1 / span 2">Auto-Test: 15 Foto-/Aufnahme-Befehle nacheinander</button>
     <button id="saveStart" class="small start">Als „Start" speichern</button>
     <button id="saveStop" class="small stop">Als „Stopp" speichern</button>
   </div>
@@ -72,7 +73,7 @@
 
 <script>
 "use strict";
-const APP_VERSION = "v5 (2026-10-25 17:32, DUML, Statusmeldungen ausgeblendet)";
+const APP_VERSION = "v6 (2026-10-25 17:50, DUML, Auto-Test)";
 const NUM_CAMS = 4;
 const SVC = "0000fff0-0000-1000-8000-00805f9b34fb";
 const CH_A = "0000fff4-0000-1000-8000-00805f9b34fb";
@@ -246,6 +247,27 @@ $("p1").onclick = () => $("probe").value = "01 40 02 02";
 $("p2").onclick = () => $("probe").value = "01 40 02 03";
 $("p3").onclick = () => $("probe").value = "01 40 02 01";
 $("pPair").onclick = () => sendPairing(cams[+$("probeCam").value - 1]);
+let autoRunning = false;
+$("auto").onclick = async () => {
+  if (autoRunning) return;
+  const c = cams[+$("probeCam").value - 1];
+  if (!c.ready){ log(`K${c.n}: Nicht verbunden.`); return; }
+  autoRunning = true; $("auto").disabled = true;
+  const payloads = [[], [0], [1], [2], [3]];
+  let n = 0;
+  log("=== AUTO-TEST START (jeweils ca. 3 Sekunden Pause) – bitte Kamera beobachten ===");
+  for (const id of [1, 2, 3]){
+    for (const pl of payloads){
+      n++;
+      if (!c.ready) break;
+      log(`--- TEST ${n}/15: Set 02, ID ${id.toString(16).padStart(2,"0")}, Daten: ${pl.length ? hex(pl) : "keine"}`);
+      await runCmd(c, hex([0x01, 0x40, 0x02, id, ...pl]));
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+  log("=== AUTO-TEST ENDE ===");
+  autoRunning = false; $("auto").disabled = false;
+};
 $("probeSend").onclick = () => runCmd(cams[+$("probeCam").value - 1], $("probe").value);
 $("saveStart").onclick = () => { $("cmdStart").value = $("probe").value; store.set("cmdStart", $("probe").value); log("Start-Befehl gespeichert."); };
 $("saveStop").onclick  = () => { $("cmdStop").value = $("probe").value; store.set("cmdStop", $("probe").value); log("Stopp-Befehl gespeichert."); };
