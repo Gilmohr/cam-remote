@@ -22,12 +22,12 @@
   .chip { font-size:12px; padding:3px 9px; border-radius:20px; background:#30363d; color:var(--mut); }
   .chip.ok { background:#16351f; color:#56d364; } .chip.rec { background:#4a1d1f; color:#ff7b72; } .chip.wait { background:#3b2f10; color:#e3b341; }
   .btns { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:10px; }
-  .code { text-align:center; font-size:13px; color:var(--mut); margin-top:8px; }
-  .code b { font-size:22px; color:#e3b341; letter-spacing:3px; }
   details { margin-top:14px; } summary { color:var(--mut); padding:6px 0; }
-  #log { background:#0b0e12; border:1px solid var(--line); border-radius:10px; padding:8px; height:220px; overflow:auto; font:11px/1.35 ui-monospace,Menlo,monospace; white-space:pre-wrap; word-break:break-all; }
-  label { display:block; font-size:13px; color:var(--mut); margin:8px 0 3px; }
+  #log { background:#0b0e12; border:1px solid var(--line); border-radius:10px; padding:8px; height:240px; overflow:auto; font:11px/1.35 ui-monospace,Menlo,monospace; white-space:pre-wrap; word-break:break-all; }
+  label { display:block; font-size:13px; color:var(--mut); margin:10px 0 3px; }
   select,input { width:100%; padding:10px; border-radius:10px; border:1px solid var(--line); background:#0b0e12; color:var(--txt); font:inherit; }
+  .g2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
+  .small { padding:10px 6px; font-size:14px; }
   .warn { background:#3b2f10; color:#e3b341; border-radius:10px; padding:10px; font-size:13px; margin-bottom:12px; display:none; }
 </style>
 </head>
@@ -43,52 +43,58 @@
 
 <div id="cams"></div>
 
-<details>
-  <summary>Protokoll &amp; Einstellungen</summary>
+<details open>
+  <summary>Protokoll &amp; Test-Konsole</summary>
   <div id="log"></div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
-    <button id="copyLog">Protokoll kopieren</button>
-    <button id="clearLog">Leeren</button>
+  <div class="g2">
+    <button id="copyLog" class="small">Protokoll kopieren</button>
+    <button id="clearLog" class="small">Leeren</button>
   </div>
-  <label>CRC16-Variante (nur ändern, wenn Kamera nicht reagiert)</label>
-  <select id="crcVar">
-    <option value="A">A (Standard, passt zum DJI-Beispiel)</option>
-    <option value="B">B (Init 0x3692)</option>
-  </select>
-  <label>Eigene Geräte-ID (hex, 8 Zeichen)</label>
-  <input id="devId" value="00000000" maxlength="8" autocapitalize="off" autocomplete="off">
+
+  <label>Test-Befehl an Kamera senden (Hex: Empfänger, Typ, Set, ID, Daten …)</label>
+  <input id="probe" value="01 40 02 02" autocapitalize="off" autocomplete="off" autocorrect="off">
+  <div class="g2">
+    <select id="probeCam"><option value="1">Kamera 1</option><option value="2">Kamera 2</option><option value="3">Kamera 3</option><option value="4">Kamera 4</option></select>
+    <button id="probeSend" class="small conn">Senden</button>
+  </div>
+  <div class="g2">
+    <button id="p1" class="small">Vorlage: Start</button>
+    <button id="p2" class="small">Vorlage: Stopp</button>
+    <button id="p3" class="small">Vorlage: Foto</button>
+    <button id="pPair" class="small">Pairing senden</button>
+    <button id="saveStart" class="small start">Als „Start" speichern</button>
+    <button id="saveStop" class="small stop">Als „Stopp" speichern</button>
+  </div>
+  <label>Aktueller Start-Befehl</label><input id="cmdStart" autocapitalize="off" autocomplete="off">
+  <label>Aktueller Stopp-Befehl</label><input id="cmdStop" autocapitalize="off" autocomplete="off">
+  <label>Pairing-PIN</label><input id="pin" autocapitalize="off" autocomplete="off">
 </details>
 
 <script>
 "use strict";
-const APP_VERSION = "v3 (2026-10-25 16:55, lange UUIDs)";
+const APP_VERSION = "v4 (2026-10-25 17:20, DUML)";
 const NUM_CAMS = 4;
 const SVC = "0000fff0-0000-1000-8000-00805f9b34fb";
-const CH_NOTIFY = "0000fff4-0000-1000-8000-00805f9b34fb";
-const CH_WRITE = "0000fff5-0000-1000-8000-00805f9b34fb";
+const CH_A = "0000fff4-0000-1000-8000-00805f9b34fb";
+const CH_W = "0000fff5-0000-1000-8000-00805f9b34fb";
 const $ = id => document.getElementById(id);
 const hex = a => Array.from(a).map(b => b.toString(16).padStart(2,"0")).join(" ").toUpperCase();
+const parseHex = s => { const h = s.replace(/[^0-9a-f]/gi, ""); const o = []; for (let i = 0; i + 1 < h.length; i += 2) o.push(parseInt(h.substr(i,2),16)); return o; };
 
-// ---------- Einstellungen ----------
 const store = {
   get(k, d){ try { const v = localStorage.getItem(k); return v === null ? d : v; } catch(e){ return d; } },
   set(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
 };
-$("crcVar").value = store.get("crcVar", "A");
-$("devId").value = store.get("devId", "00000000");
-$("crcVar").onchange = () => { store.set("crcVar", $("crcVar").value); selfTest(); };
-$("devId").onchange = () => store.set("devId", $("devId").value);
+$("cmdStart").value = store.get("cmdStart", "01 40 02 02");
+$("cmdStop").value  = store.get("cmdStop",  "01 40 02 03");
+$("pin").value      = store.get("pin", "love");
+$("pin").onchange = () => store.set("pin", $("pin").value);
+$("cmdStart").onchange = () => store.set("cmdStart", $("cmdStart").value);
+$("cmdStop").onchange  = () => store.set("cmdStop",  $("cmdStop").value);
 
-// stabile "MAC"-Adresse dieser Fernbedienung, damit die Kamera uns wiedererkennt
-let myMac = store.get("mac", "");
-if (!/^([0-9a-f]{2}-){5}[0-9a-f]{2}$/.test(myMac)) {
-  const r = new Uint8Array(6); crypto.getRandomValues(r); r[0] = (r[0] | 2) & 0xFE;
-  myMac = Array.from(r).map(b => b.toString(16).padStart(2,"0")).join("-");
-  store.set("mac", myMac);
-}
-const macBytes = myMac.split("-").map(h => parseInt(h, 16));
+let devStr = store.get("devStr", "");
+if (!/^\d{15}$/.test(devStr)) { devStr = "00"; for (let i = 0; i < 13; i++) devStr += Math.floor(Math.random()*10); store.set("devStr", devStr); }
 
-// ---------- Log ----------
 function log(msg){
   const t = new Date().toLocaleTimeString("de-DE");
   const el = $("log"); el.textContent += `[${t}] ${msg}\n`; el.scrollTop = el.scrollHeight;
@@ -99,179 +105,147 @@ $("copyLog").onclick = async () => {
   catch(e){ log("Kopieren nicht möglich – Text bitte markieren."); }
 };
 
-// ---------- CRC ----------
-function crc16(data){
-  let c = $("crcVar").value === "B" ? 0x3692 : 0x0898;
-  for (const b of data){ c ^= b; for (let i=0;i<8;i++) c = (c & 1) ? (c >>> 1) ^ 0x8408 : c >>> 1; }
-  return c & 0xFFFF;
-}
-function crc32(data){
-  let c = 0x3AA3;
-  for (const b of data){ c ^= b; for (let i=0;i<8;i++) c = (c & 1) ? (c >>> 1) ^ 0xEDB88320 : c >>> 1; }
-  return c >>> 0;
-}
+// ---------- DUML (Prüfsummen anhand echter Kamera-Frames bestätigt) ----------
+function crc8(d){ let c = 0x77; for (const b of d){ c ^= b; for (let i=0;i<8;i++) c = (c & 1) ? (c >>> 1) ^ 0x8C : c >>> 1; } return c & 0xFF; }
+function crc16(d){ let c = 0x3692; for (const b of d){ c ^= b; for (let i=0;i<8;i++) c = (c & 1) ? (c >>> 1) ^ 0x8408 : c >>> 1; } return c & 0xFFFF; }
 
-// ---------- Frames ----------
-function buildFrame(cmdType, seq, data){
-  const len = 12 + data.length + 4;
+function buildDuml(sender, receiver, seq, type, set, id, payload){
+  const len = 13 + payload.length;
   const f = new Uint8Array(len);
-  f[0] = 0xAA; f[1] = len & 0xFF; f[2] = (len >> 8) & 0x03;
-  f[3] = cmdType; f[4] = 0; f[5] = f[6] = f[7] = 0;
-  f[8] = seq & 0xFF; f[9] = (seq >> 8) & 0xFF;
-  const c16 = crc16(f.subarray(0, 10)); f[10] = c16 & 0xFF; f[11] = c16 >> 8;
-  f.set(data, 12);
-  const c32 = crc32(f.subarray(0, len - 4));
-  f[len-4] = c32 & 0xFF; f[len-3] = (c32 >>> 8) & 0xFF; f[len-2] = (c32 >>> 16) & 0xFF; f[len-1] = (c32 >>> 24) & 0xFF;
+  f[0] = 0x55; f[1] = len & 0xFF; f[2] = ((len >> 8) & 0x03) | 0x04;
+  f[3] = crc8(f.subarray(0, 3));
+  f[4] = sender; f[5] = receiver; f[6] = seq & 0xFF; f[7] = (seq >> 8) & 0xFF;
+  f[8] = type; f[9] = set; f[10] = id;
+  f.set(payload, 11);
+  const c = crc16(f.subarray(0, len - 2)); f[len-2] = c & 0xFF; f[len-1] = c >> 8;
   return f;
 }
 function selfTest(){
-  const expect = "AA 1B 00 01 00 00 00 00 05 00 57 EE 1D 04 00 00 33 FF 0A 01 47 39 36 F4 FA E1 D0";
-  const f = buildFrame(0x01, 5, [0x1D,0x04,0x00,0x00,0x33,0xFF,0x0A,0x01,0x47,0x39,0x36]);
-  log(hex(f) === expect ? "Selbsttest Prüfsummen: OK (stimmt mit DJI-Beispiel überein)" : "Selbsttest Prüfsummen: FEHLER – " + hex(f));
+  // 1) Beispiel aus der Fachliteratur (Pairing-Frame)
+  const pl = [15, ...Array.from("001749319286102").map(ch => ch.charCodeAt(0)), 4, ...Array.from("5160").map(ch => ch.charCodeAt(0))];
+  const f = buildDuml(0x02, 0x07, 0x9280, 0x40, 0x07, 0x45, pl);
+  const ok1 = hex(f).replace(/ /g,"") === "552204EA020780924007450F303031373439333139323836313032043531363" + "02E42";
+  // 2) echter Frame deiner Kamera: Länge, CRC8 und CRC16
+  const real = parseHex("55 44 04 1A 88 02 30 03 00 00 32 33 33 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 0E 34 46 33 43 4A 42 39 30 30 41 42 47 51 42 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 D7 F9");
+  const ok2 = crc8(real.slice(0,3)) === real[3] && crc16(real.slice(0, real.length-2)) === (real[real.length-2] | (real[real.length-1] << 8));
+  log(`Selbsttest: Beispiel-Frame ${ok1 ? "OK" : "FEHLER"}, echter Kamera-Frame ${ok2 ? "OK" : "FEHLER"}`);
 }
 
 // ---------- Kameras ----------
 const cams = [];
-for (let i = 0; i < NUM_CAMS; i++) cams.push({ n:i+1, device:null, wr:null, seq:1, buf:[], ready:false, recording:false, deviceId:null, code:null });
+for (let i = 0; i < NUM_CAMS; i++) cams.push({ n:i+1, device:null, wr:null, seq:Math.floor(Math.random()*60000), buf:[], ready:false, recording:false });
 
 function render(){
   cams.forEach(c => {
     const chip = $("chip"+c.n);
     let txt = "Nicht verbunden", cls = "chip";
-    if (c.device && !c.ready){ txt = "Warte auf Bestätigung…"; cls = "chip wait"; }
-    if (c.ready){ txt = c.recording ? "● Aufnahme läuft" : "Verbunden"; cls = c.recording ? "chip rec" : "chip ok"; }
+    if (c.ready){ txt = "Verbunden"; cls = "chip ok"; }
+    else if (c.device){ txt = "Verbinde…"; cls = "chip wait"; }
     chip.textContent = txt; chip.className = cls;
     $("start"+c.n).disabled = !c.ready; $("stop"+c.n).disabled = !c.ready;
     $("conn"+c.n).textContent = c.device ? "Trennen" : "Verbinden";
-    const codeEl = $("code"+c.n);
-    if (c.device && !c.ready && c.code !== null){ codeEl.style.display = "block"; codeEl.innerHTML = `Code <b>${String(c.code).padStart(4,"0")}</b><br>Auf der Kamera bestätigen`; }
-    else codeEl.style.display = "none";
   });
 }
-const camsEl = $("cams");
 cams.forEach(c => {
   const d = document.createElement("div"); d.className = "card";
   d.innerHTML = `<div class="row"><span class="name">Kamera ${c.n}</span><span class="chip" id="chip${c.n}"></span></div>
-    <div class="code" id="code${c.n}" style="display:none"></div>
     <div class="btns">
       <button class="conn" id="conn${c.n}">Verbinden</button>
       <button class="start" id="start${c.n}">● Start</button>
       <button class="stop" id="stop${c.n}">■ Stopp</button>
     </div>`;
-  camsEl.appendChild(d);
+  $("cams").appendChild(d);
   $("conn"+c.n).onclick = () => c.device ? disconnect(c) : connect(c);
-  $("start"+c.n).onclick = () => record(c, true);
-  $("stop"+c.n).onclick = () => record(c, false);
+  $("start"+c.n).onclick = () => runCmd(c, $("cmdStart").value);
+  $("stop"+c.n).onclick = () => runCmd(c, $("cmdStop").value);
 });
 
-async function send(c, frame){
-  const props = c.wr.properties;
+async function writeRaw(c, frame){
   for (let i = 0; i < frame.length; i += 20){
     const chunk = frame.slice(i, i + 20);
-    if (props.writeWithoutResponse) await c.wr.writeValueWithoutResponse(chunk);
+    if (c.wr.properties.writeWithoutResponse) await c.wr.writeValueWithoutResponse(chunk);
     else await c.wr.writeValueWithResponse(chunk);
   }
   log(`K${c.n} TX: ${hex(frame)}`);
 }
 const nextSeq = c => (c.seq = (c.seq + 1) & 0xFFFF);
 
+// Befehl im Format: Empfänger Typ Set ID [Daten…]
+async function runCmd(c, str){
+  const b = parseHex(str);
+  if (b.length < 4){ log("Befehl zu kurz (mind. 4 Bytes: Empfänger Typ Set ID)."); return; }
+  if (!c.ready){ log(`K${c.n}: Nicht verbunden.`); return; }
+  try { await writeRaw(c, buildDuml(0x02, b[0], nextSeq(c), b[1], b[2], b[3], b.slice(4))); }
+  catch(e){ log(`K${c.n}: Senden fehlgeschlagen – ${e.name || ""} ${e.message || e}`); }
+}
+async function sendPairing(c){
+  const pin = Array.from($("pin").value).map(ch => ch.charCodeAt(0));
+  const dev = Array.from(devStr).map(ch => ch.charCodeAt(0));
+  const payload = [dev.length, ...dev, pin.length, ...pin];
+  try { await writeRaw(c, buildDuml(0x02, 0x07, nextSeq(c), 0x40, 0x07, 0x45, payload)); log(`K${c.n}: Pairing gesendet – bitte Kamerabildschirm beachten.`); }
+  catch(e){ log(`K${c.n}: Pairing fehlgeschlagen – ${e.name || ""} ${e.message || e}`); }
+}
+
 async function connect(c){
   if (!navigator.bluetooth){ $("nobt").style.display = "block"; return; }
   try {
-    log(`K${c.n}: Suche Kamera…`);
+    log(`K${c.n}: Suche Kamera… (Eintrag „DJIAction-…“ wählen)`);
     const dev = await navigator.bluetooth.requestDevice({ acceptAllDevices:true, optionalServices:[SVC] });
     if (cams.some(o => o !== c && o.device && o.device.id === dev.id)){ log(`K${c.n}: Diese Kamera ist schon in einem anderen Slot.`); return; }
-    c.device = dev; c.ready = false; c.recording = false; c.buf = []; c.code = Math.floor(Math.random() * 10000);
-    render();
+    c.device = dev; c.ready = false; c.buf = []; render();
     dev.addEventListener("gattserverdisconnected", () => { log(`K${c.n}: Verbindung getrennt.`); reset(c); });
     const server = await dev.gatt.connect();
     log(`K${c.n}: Bluetooth verbunden mit „${dev.name || "unbekannt"}"`);
     const svc = await server.getPrimaryService(SVC);
-    const nt = await svc.getCharacteristic(CH_NOTIFY);
-    c.wr = await svc.getCharacteristic(CH_WRITE);
-    nt.addEventListener("characteristicvaluechanged", e => onData(c, new Uint8Array(e.target.value.buffer)));
-    await nt.startNotifications();
-    log(`K${c.n}: Kanäle bereit, sende Verbindungsanfrage…`);
-    await sendConnectRequest(c);
+    const ca = await svc.getCharacteristic(CH_A);
+    c.wr = await svc.getCharacteristic(CH_W);
+    const handler = e => onData(c, new Uint8Array(e.target.value.buffer));
+    ca.addEventListener("characteristicvaluechanged", handler);
+    c.wr.addEventListener("characteristicvaluechanged", handler);
+    try { await ca.startNotifications(); } catch(e){ log(`K${c.n}: Notify FFF4: ${e.message || e}`); }
+    try { await c.wr.startNotifications(); } catch(e){ log(`K${c.n}: Notify FFF5: ${e.message || e}`); }
+    c.ready = true; render();
+    log(`K${c.n}: Kanäle bereit.`);
+    await sendPairing(c);
   } catch(e){
     log(`K${c.n}: Fehler – ${e.name || ""} ${e.message || e}`);
     if (c.device && c.device.gatt && c.device.gatt.connected) c.device.gatt.disconnect(); else reset(c);
   }
 }
-function reset(c){ c.device = null; c.wr = null; c.ready = false; c.recording = false; c.code = null; c.deviceId = null; render(); }
+function reset(c){ c.device = null; c.wr = null; c.ready = false; c.recording = false; render(); }
 function disconnect(c){ try { c.device.gatt.disconnect(); } catch(e){} reset(c); }
 
-function myDeviceId(){
-  const h = ($("devId").value || "00000000").padStart(8,"0").slice(0,8);
-  return [0,2,4,6].map(i => parseInt(h.substr(i,2),16) || 0);
-}
-async function sendConnectRequest(c){
-  const mac16 = new Array(16).fill(0); macBytes.forEach((b,i) => mac16[i] = b);
-  const payload = [
-    ...myDeviceId(), 6, ...mac16,
-    0,0,0,0,          // fw_version
-    0,                // conidx
-    1,                // verify_mode: Kamera zeigt Code
-    c.code & 0xFF, (c.code >> 8) & 0xFF,
-    0,0,0,0
-  ];
-  await send(c, buildFrame(0x01, nextSeq(c), [0x00, 0x19, ...payload]));
-}
-
+// ---------- Empfang ----------
 function onData(c, chunk){
   c.buf.push(...chunk);
-  while (c.buf.length){
-    const s = c.buf.indexOf(0xAA);
-    if (s < 0){ c.buf = []; return; }
-    if (s > 0) c.buf.splice(0, s);
-    if (c.buf.length < 3) return;
+  for (;;){
+    // zu einem gültigen Frame-Anfang vorspulen
+    while (c.buf.length >= 4){
+      if (c.buf[0] === 0x55 && (c.buf[2] >> 2) === 1 && crc8(c.buf.slice(0,3)) === c.buf[3]) break;
+      c.buf.shift();
+    }
+    if (c.buf.length < 4) return;
     const len = c.buf[1] | ((c.buf[2] & 0x03) << 8);
-    if (len < 16){ c.buf.shift(); continue; }
+    if (len < 13){ c.buf.shift(); continue; }
     if (c.buf.length < len) return;
     const f = Uint8Array.from(c.buf.splice(0, len));
-    log(`K${c.n} RX: ${hex(f)}`);
-    handleFrame(c, f);
+    const good = crc16(f.subarray(0, len-2)) === (f[len-2] | (f[len-1] << 8));
+    const seq = f[6] | (f[7] << 8);
+    const payload = f.slice(11, len-2);
+    log(`K${c.n} RX: von ${f[4].toString(16)} an ${f[5].toString(16)} typ ${f[8].toString(16)} set ${f[9].toString(16)} id ${f[10].toString(16)} seq ${seq} daten[${payload.length}] ${hex(payload.slice(0,24))}${payload.length>24?" …":""}${good?"":"  (CRC?)"}`);
   }
 }
-async function handleFrame(c, f){
-  const cmdType = f[3], seq = f[8] | (f[9] << 8);
-  const data = f.slice(12, f.length - 4);
-  if (data.length < 2) return;
-  const set = data[0], id = data[1], p = data.slice(2);
-  const isResp = (cmdType & 0x20) !== 0;
-  try {
-    if (set === 0x00 && id === 0x19 && !isResp){
-      // Kamera schickt ihre eigene Verbindungsanfrage mit Ergebnis (verify_mode 2)
-      c.deviceId = Array.from(p.slice(0, 4));
-      const mode = p[26], result = p[27] | (p[28] << 8);
-      if (mode === 2 && result !== 0){ log(`K${c.n}: Kamera hat die Verbindung abgelehnt.`); disconnect(c); return; }
-      const resp = [0x00, 0x19, ...c.deviceId, 0, c.n & 0xFF, 0, 0, 0];
-      await send(c, buildFrame(0x20, seq, resp));
-      c.ready = true; render();
-      log(`K${c.n}: ✓ Bereit zum Aufnehmen.`);
-      subscribeStatus(c);
-    } else if (set === 0x00 && id === 0x19 && isResp){
-      log(`K${c.n}: Antwort auf Verbindungsanfrage, Code ${p[4]}. Bitte ggf. auf der Kamera bestätigen.`);
-    } else if (set === 0x1D && id === 0x02 && !isResp){
-      const rec = p[1] === 0x03 && p[0] !== 0x05;   // Status 3 = Aufnahme/Foto, Modus 5 = Foto
-      if (rec !== c.recording){ c.recording = rec; render(); }
-    } else if (set === 0x1D && id === 0x03 && isResp){
-      log(`K${c.n}: Aufnahme-Befehl ${p[0] === 0 ? "bestätigt" : "Fehlercode " + p[0]}`);
-    }
-  } catch(e){ log(`K${c.n}: Fehler bei Verarbeitung – ${e.message || e}`); }
-}
-async function subscribeStatus(c){
-  try { await send(c, buildFrame(0x01, nextSeq(c), [0x1D, 0x05, 3, 20, 0,0,0,0])); } catch(e){ log(`K${c.n}: Statusabo fehlgeschlagen`); }
-}
 
-async function record(c, start){
-  if (!c.ready){ log(`K${c.n}: Noch nicht bereit.`); return; }
-  try {
-    await send(c, buildFrame(0x01, nextSeq(c), [0x1D, 0x03, ...c.deviceId, start ? 0 : 1, 0x01, 0x47, 0x39, 0x36]));
-  } catch(e){ log(`K${c.n}: Senden fehlgeschlagen – ${e.message || e}`); }
-}
-$("allStart").onclick = () => Promise.all(cams.filter(c => c.ready).map(c => record(c, true)));
-$("allStop").onclick  = () => Promise.all(cams.filter(c => c.ready).map(c => record(c, false)));
+// ---------- Test-Konsole ----------
+$("p1").onclick = () => $("probe").value = "01 40 02 02";
+$("p2").onclick = () => $("probe").value = "01 40 02 03";
+$("p3").onclick = () => $("probe").value = "01 40 02 01";
+$("pPair").onclick = () => sendPairing(cams[+$("probeCam").value - 1]);
+$("probeSend").onclick = () => runCmd(cams[+$("probeCam").value - 1], $("probe").value);
+$("saveStart").onclick = () => { $("cmdStart").value = $("probe").value; store.set("cmdStart", $("probe").value); log("Start-Befehl gespeichert."); };
+$("saveStop").onclick  = () => { $("cmdStop").value = $("probe").value; store.set("cmdStop", $("probe").value); log("Stopp-Befehl gespeichert."); };
+$("allStart").onclick = () => Promise.all(cams.filter(c => c.ready).map(c => runCmd(c, $("cmdStart").value)));
+$("allStop").onclick  = () => Promise.all(cams.filter(c => c.ready).map(c => runCmd(c, $("cmdStop").value)));
 
 if (!navigator.bluetooth) $("nobt").style.display = "block";
 render();
