@@ -72,7 +72,7 @@
 
 <script>
 "use strict";
-const APP_VERSION = "v4 (2026-10-25 17:20, DUML)";
+const APP_VERSION = "v5 (2026-10-25 17:32, DUML, Statusmeldungen ausgeblendet)";
 const NUM_CAMS = 4;
 const SVC = "0000fff0-0000-1000-8000-00805f9b34fb";
 const CH_A = "0000fff4-0000-1000-8000-00805f9b34fb";
@@ -212,7 +212,7 @@ async function connect(c){
     if (c.device && c.device.gatt && c.device.gatt.connected) c.device.gatt.disconnect(); else reset(c);
   }
 }
-function reset(c){ c.device = null; c.wr = null; c.ready = false; c.recording = false; render(); }
+function reset(c){ c.device = null; c.wr = null; c.ready = false; c.recording = false; c.statusSeen = false; render(); }
 function disconnect(c){ try { c.device.gatt.disconnect(); } catch(e){} reset(c); }
 
 // ---------- Empfang ----------
@@ -232,6 +232,11 @@ function onData(c, chunk){
     const good = crc16(f.subarray(0, len-2)) === (f[len-2] | (f[len-1] << 8));
     const seq = f[6] | (f[7] << 8);
     const payload = f.slice(11, len-2);
+    if (f[4] === 0x88 && f[8] === 0x00 && f[9] === 0x00 && f[10] === 0x32){
+      // Sekündliche Status-Meldung der Kamera: nur einmal anzeigen, damit echte Antworten sichtbar bleiben
+      if (!c.statusSeen){ c.statusSeen = true; log(`K${c.n} RX: Kamera sendet sekündlich Statusmeldungen (werden ab jetzt nicht mehr einzeln angezeigt).`); }
+      continue;
+    }
     log(`K${c.n} RX: von ${f[4].toString(16)} an ${f[5].toString(16)} typ ${f[8].toString(16)} set ${f[9].toString(16)} id ${f[10].toString(16)} seq ${seq} daten[${payload.length}] ${hex(payload.slice(0,24))}${payload.length>24?" …":""}${good?"":"  (CRC?)"}`);
   }
 }
