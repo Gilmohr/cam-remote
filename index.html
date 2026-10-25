@@ -62,7 +62,9 @@
 <script>
 "use strict";
 const NUM_CAMS = 4;
-const SVC = 0xFFF0, CH_NOTIFY = 0xFFF4, CH_WRITE = 0xFFF5;
+const SVC = "0000fff0-0000-1000-8000-00805f9b34fb";
+const CH_NOTIFY = "0000fff4-0000-1000-8000-00805f9b34fb";
+const CH_WRITE = "0000fff5-0000-1000-8000-00805f9b34fb";
 const $ = id => document.getElementById(id);
 const hex = a => Array.from(a).map(b => b.toString(16).padStart(2,"0")).join(" ").toUpperCase();
 
@@ -191,7 +193,7 @@ async function connect(c){
     log(`K${c.n}: Kanäle bereit, sende Verbindungsanfrage…`);
     await sendConnectRequest(c);
   } catch(e){
-    log(`K${c.n}: Fehler – ${e.message || e}`);
+    log(`K${c.n}: Fehler – ${e.name || ""} ${e.message || e}`);
     if (c.device && c.device.gatt && c.device.gatt.connected) c.device.gatt.disconnect(); else reset(c);
   }
 }
