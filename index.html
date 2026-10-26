@@ -41,6 +41,8 @@
   <button class="big stop" id="allStop">■ Alle stoppen</button>
 </div>
 
+<div id="banner" class="warn" style="display:none;font-size:17px;text-align:center"></div>
+
 <div id="cams"></div>
 
 <details open>
@@ -58,10 +60,11 @@
     <button id="probeSend" class="small conn">Senden</button>
   </div>
   <div class="g2">
-    <button id="p1" class="small">Vorlage: Start</button>
-    <button id="p2" class="small">Vorlage: Stopp</button>
-    <button id="p3" class="small">Vorlage: Foto</button>
+    <button id="p1" class="small">Kandidat 02 02 02</button>
+    <button id="p2" class="small">Kandidat 02 02 03</button>
+    <button id="p3" class="small">Foto 02 01 01</button>
     <button id="pPair" class="small">Pairing senden</button>
+    <button id="finder" class="small start" style="grid-column:1 / span 2">▶ Aufnahme-Finder (6 Schritte, ca. 1 Min.)</button>
     <button id="auto" class="small conn" style="grid-column:1 / span 2">Auto-Test: 15 Foto-/Aufnahme-Befehle nacheinander</button>
     <button id="saveStart" class="small start">Als „Start" speichern</button>
     <button id="saveStop" class="small stop">Als „Stopp" speichern</button>
@@ -73,7 +76,7 @@
 
 <script>
 "use strict";
-const APP_VERSION = "v6 (2026-10-25 17:50, DUML, Auto-Test)";
+const APP_VERSION = "v7 (2026-10-26 09:00, Aufnahme-Finder)";
 const NUM_CAMS = 4;
 const SVC = "0000fff0-0000-1000-8000-00805f9b34fb";
 const CH_A = "0000fff4-0000-1000-8000-00805f9b34fb";
@@ -86,12 +89,12 @@ const store = {
   get(k, d){ try { const v = localStorage.getItem(k); return v === null ? d : v; } catch(e){ return d; } },
   set(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
 };
-$("cmdStart").value = store.get("cmdStart", "01 40 02 02");
-$("cmdStop").value  = store.get("cmdStop",  "01 40 02 03");
+$("cmdStart").value = store.get("cmdStart2", "01 40 02 02 02");
+$("cmdStop").value  = store.get("cmdStop2", "01 40 02 02 03");
 $("pin").value      = store.get("pin", "love");
 $("pin").onchange = () => store.set("pin", $("pin").value);
-$("cmdStart").onchange = () => store.set("cmdStart", $("cmdStart").value);
-$("cmdStop").onchange  = () => store.set("cmdStop",  $("cmdStop").value);
+$("cmdStart").onchange = () => store.set("cmdStart2", $("cmdStart").value);
+$("cmdStop").onchange  = () => store.set("cmdStop2",  $("cmdStop").value);
 
 let devStr = store.get("devStr", "");
 if (!/^\d{15}$/.test(devStr)) { devStr = "00"; for (let i = 0; i < 13; i++) devStr += Math.floor(Math.random()*10); store.set("devStr", devStr); }
@@ -213,7 +216,7 @@ async function connect(c){
     if (c.device && c.device.gatt && c.device.gatt.connected) c.device.gatt.disconnect(); else reset(c);
   }
 }
-function reset(c){ c.device = null; c.wr = null; c.ready = false; c.recording = false; c.statusSeen = false; render(); }
+function reset(c){ c.device = null; c.wr = null; c.ready = false; c.recording = false; c.statusSeen = false; c.pairSeen = false; render(); }
 function disconnect(c){ try { c.device.gatt.disconnect(); } catch(e){} reset(c); }
 
 // ---------- Empfang ----------
@@ -238,15 +241,41 @@ function onData(c, chunk){
       if (!c.statusSeen){ c.statusSeen = true; log(`K${c.n} RX: Kamera sendet sekündlich Statusmeldungen (werden ab jetzt nicht mehr einzeln angezeigt).`); }
       continue;
     }
-    log(`K${c.n} RX: von ${f[4].toString(16)} an ${f[5].toString(16)} typ ${f[8].toString(16)} set ${f[9].toString(16)} id ${f[10].toString(16)} seq ${seq} daten[${payload.length}] ${hex(payload.slice(0,24))}${payload.length>24?" …":""}${good?"":"  (CRC?)"}`);
+    if (f[4] === 0x07 && f[8] === 0x40 && f[9] === 0x07 && f[10] === 0x46){
+      if (!c.pairSeen){ c.pairSeen = true; log(`K${c.n} RX: Kamera sendet sekündlich Kopplungs-Meldung 07/46 (wird nicht mehr einzeln angezeigt).`); }
+      continue;
+    }
+    log(`K${c.n} RX: von ${f[4].toString(16)} an ${f[5].toString(16)} typ ${f[8].toString(16)} set ${f[9].toString(16)} id ${f[10].toString(16)} seq ${seq} daten[${payload.length}] ${hex(payload.slice(0,24))}${payload.length>24?" …":""}${good?"":"  (CRC?)"}${(f[8]===0xC0 && payload.length===1) ? (payload[0]===0 ? "  ✓ ANGENOMMEN" : "  ✗ abgelehnt") : ""}`);
   }
 }
 
 // ---------- Test-Konsole ----------
-$("p1").onclick = () => $("probe").value = "01 40 02 02";
-$("p2").onclick = () => $("probe").value = "01 40 02 03";
-$("p3").onclick = () => $("probe").value = "01 40 02 01";
+$("p1").onclick = () => $("probe").value = "01 40 02 02 02";
+$("p2").onclick = () => $("probe").value = "01 40 02 02 03";
+$("p3").onclick = () => $("probe").value = "01 40 02 01 01";
 $("pPair").onclick = () => sendPairing(cams[+$("probeCam").value - 1]);
+let finderRunning = false;
+$("finder").onclick = async () => {
+  if (finderRunning) return;
+  const c = cams[+$("probeCam").value - 1];
+  if (!c.ready){ log(`K${c.n}: Nicht verbunden.`); return; }
+  finderRunning = true; $("finder").disabled = true;
+  const steps = [[2,2,2],[2,2,3],[2,2,1],[2,1,1],[2,1,2],[2,1,3]];
+  const b = $("banner"); b.style.display = "block";
+  log("=== AUFNAHME-FINDER START: Kamera im Videomodus, nichts läuft. Merke dir, bei welchem SCHRITT sie startet bzw. stoppt ===");
+  for (let i = 0; i < steps.length; i++){
+    const [st,id,d] = steps[i];
+    log(`=== SCHRITT ${i+1}/${steps.length}: Befehl ${hex([st,id,d])} ===`);
+    await runCmd(c, hex([0x01,0x40,st,id,d]));
+    for (let t = 10; t > 0; t--){
+      b.textContent = `Schritt ${i+1}/${steps.length} gesendet – Kamera beobachten (${t} s)`;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  b.style.display = "none";
+  log("=== AUFNAHME-FINDER ENDE ===");
+  finderRunning = false; $("finder").disabled = false;
+};
 let autoRunning = false;
 $("auto").onclick = async () => {
   if (autoRunning) return;
@@ -269,8 +298,8 @@ $("auto").onclick = async () => {
   autoRunning = false; $("auto").disabled = false;
 };
 $("probeSend").onclick = () => runCmd(cams[+$("probeCam").value - 1], $("probe").value);
-$("saveStart").onclick = () => { $("cmdStart").value = $("probe").value; store.set("cmdStart", $("probe").value); log("Start-Befehl gespeichert."); };
-$("saveStop").onclick  = () => { $("cmdStop").value = $("probe").value; store.set("cmdStop", $("probe").value); log("Stopp-Befehl gespeichert."); };
+$("saveStart").onclick = () => { $("cmdStart").value = $("probe").value; store.set("cmdStart2", $("probe").value); log("Start-Befehl gespeichert."); };
+$("saveStop").onclick  = () => { $("cmdStop").value = $("probe").value; store.set("cmdStop2", $("probe").value); log("Stopp-Befehl gespeichert."); };
 $("allStart").onclick = () => Promise.all(cams.filter(c => c.ready).map(c => runCmd(c, $("cmdStart").value)));
 $("allStop").onclick  = () => Promise.all(cams.filter(c => c.ready).map(c => runCmd(c, $("cmdStop").value)));
 
