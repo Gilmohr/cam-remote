@@ -47,7 +47,7 @@
 
 <div id="cams"></div>
 
-<details open>
+<details>
   <summary>Protokoll &amp; Test-Konsole</summary>
   <div id="log"></div>
   <div class="g2">
@@ -79,7 +79,7 @@
 
 <script>
 "use strict";
-const APP_VERSION = "v9 (2026-10-26 09:35, Stopp 02 02 00)";
+const APP_VERSION = "v10 (2026-10-26 09:50, Start 02 02 01 / Stopp 02 02 00)";
 const NUM_CAMS = 4;
 const SVC = "0000fff0-0000-1000-8000-00805f9b34fb";
 const CH_A = "0000fff4-0000-1000-8000-00805f9b34fb";
@@ -146,11 +146,14 @@ function render(){
   cams.forEach(c => {
     const chip = $("chip"+c.n);
     let txt = "Nicht verbunden", cls = "chip";
-    if (c.ready){ txt = "Verbunden"; cls = "chip ok"; }
+    if (c.ready){ const nm = (c.device.name || "").replace(/^DJIAction-/, ""); txt = (c.recording ? "● Aufnahme · " : "Bereit · ") + nm; cls = c.recording ? "chip rec" : "chip ok"; }
     else if (c.device){ txt = "Verbinde…"; cls = "chip wait"; }
     chip.textContent = txt; chip.className = cls;
     $("start"+c.n).disabled = !c.ready; $("stop"+c.n).disabled = !c.ready;
     $("conn"+c.n).textContent = c.device ? "Trennen" : "Verbinden";
+    const nReady = cams.filter(x => x.ready).length;
+    $("allStart").textContent = "● Alle starten" + (nReady ? ` (${nReady})` : "");
+    $("allStop").textContent = "■ Alle stoppen" + (nReady ? ` (${nReady})` : "");
   });
 }
 cams.forEach(c => {
@@ -163,8 +166,8 @@ cams.forEach(c => {
     </div>`;
   $("cams").appendChild(d);
   $("conn"+c.n).onclick = () => c.device ? disconnect(c) : connect(c);
-  $("start"+c.n).onclick = () => runCmd(c, $("cmdStart").value);
-  $("stop"+c.n).onclick = () => runCmd(c, $("cmdStop").value);
+  $("start"+c.n).onclick = () => startCam(c);
+  $("stop"+c.n).onclick = () => stopCam(c);
 });
 
 async function writeRaw(c, frame){
@@ -185,6 +188,8 @@ async function runCmd(c, str){
   try { await writeRaw(c, buildDuml(0x02, b[0], nextSeq(c), b[1], b[2], b[3], b.slice(4))); }
   catch(e){ log(`K${c.n}: Senden fehlgeschlagen – ${e.name || ""} ${e.message || e}`); }
 }
+async function startCam(c){ c.pending = "start"; c.pendingT = Date.now(); await runCmd(c, $("cmdStart").value); }
+async function stopCam(c){ c.pending = "stop"; c.pendingT = Date.now(); await runCmd(c, $("cmdStop").value); }
 async function sendPairing(c){
   const pin = Array.from($("pin").value).map(ch => ch.charCodeAt(0));
   const dev = Array.from(devStr).map(ch => ch.charCodeAt(0));
@@ -249,6 +254,11 @@ function onData(c, chunk){
       continue;
     }
     log(`K${c.n} RX: von ${f[4].toString(16)} an ${f[5].toString(16)} typ ${f[8].toString(16)} set ${f[9].toString(16)} id ${f[10].toString(16)} seq ${seq} daten[${payload.length}] ${hex(payload.slice(0,24))}${payload.length>24?" …":""}${good?"":"  (CRC?)"}${(f[8]===0xC0 && payload.length===1) ? (payload[0]===0 ? "  ✓ ANGENOMMEN" : "  ✗ abgelehnt") : ""}`);
+    // Anzeige-Status aus der Antwort ableiten: 00 = ausgeführt, DF = Kamera war schon in diesem Zustand
+    if (f[8] === 0xC0 && f[9] === 0x02 && f[10] === 0x02 && payload.length === 1 && c.pending && Date.now() - c.pendingT < 5000){
+      if (payload[0] === 0x00 || payload[0] === 0xDF){ c.recording = (c.pending === "start"); render(); }
+      c.pending = null;
+    }
   }
 }
 
@@ -326,8 +336,8 @@ $("auto").onclick = async () => {
 $("probeSend").onclick = () => runCmd(cams[+$("probeCam").value - 1], $("probe").value);
 $("saveStart").onclick = () => { $("cmdStart").value = $("probe").value; store.set("cmdStart4", $("probe").value); log("Start-Befehl gespeichert."); };
 $("saveStop").onclick  = () => { $("cmdStop").value = $("probe").value; store.set("cmdStop4", $("probe").value); log("Stopp-Befehl gespeichert."); };
-$("allStart").onclick = () => Promise.all(cams.filter(c => c.ready).map(c => runCmd(c, $("cmdStart").value)));
-$("allStop").onclick  = () => Promise.all(cams.filter(c => c.ready).map(c => runCmd(c, $("cmdStop").value)));
+$("allStart").onclick = () => Promise.all(cams.filter(c => c.ready).map(c => startCam(c)));
+$("allStop").onclick  = () => Promise.all(cams.filter(c => c.ready).map(c => stopCam(c)));
 
 if (!navigator.bluetooth) $("nobt").style.display = "block";
 render();
