@@ -43,6 +43,8 @@
 
 <div id="banner" class="warn" style="display:none;font-size:17px;text-align:center"></div>
 
+<button id="cancelFinder" class="small stop" style="display:none;width:100%;margin-bottom:12px">Test abbrechen</button>
+
 <div id="cams"></div>
 
 <details open>
@@ -60,11 +62,12 @@
     <button id="probeSend" class="small conn">Senden</button>
   </div>
   <div class="g2">
-    <button id="p1" class="small">Kandidat 02 02 02</button>
-    <button id="p2" class="small">Kandidat 02 02 03</button>
-    <button id="p3" class="small">Foto 02 01 01</button>
+    <button id="p1" class="small">Video-Start 02 02 01</button>
+    <button id="p2" class="small">Kandidat 02 02 02</button>
+    <button id="p3" class="small">Kandidat 02 02 03</button>
     <button id="pPair" class="small">Pairing senden</button>
     <button id="finder" class="small start" style="grid-column:1 / span 2">▶ Aufnahme-Finder (6 Schritte, ca. 1 Min.)</button>
+    <button id="stopfinder" class="small stop" style="grid-column:1 / span 2">■ Stopp-Finder (startet erst, dann 5 Stopp-Kandidaten, ca. 1,5 Min.)</button>
     <button id="auto" class="small conn" style="grid-column:1 / span 2">Auto-Test: 15 Foto-/Aufnahme-Befehle nacheinander</button>
     <button id="saveStart" class="small start">Als „Start" speichern</button>
     <button id="saveStop" class="small stop">Als „Stopp" speichern</button>
@@ -76,7 +79,7 @@
 
 <script>
 "use strict";
-const APP_VERSION = "v7 (2026-10-26 09:00, Aufnahme-Finder)";
+const APP_VERSION = "v8 (2026-10-26 09:20, Stopp-Finder)";
 const NUM_CAMS = 4;
 const SVC = "0000fff0-0000-1000-8000-00805f9b34fb";
 const CH_A = "0000fff4-0000-1000-8000-00805f9b34fb";
@@ -89,12 +92,12 @@ const store = {
   get(k, d){ try { const v = localStorage.getItem(k); return v === null ? d : v; } catch(e){ return d; } },
   set(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
 };
-$("cmdStart").value = store.get("cmdStart2", "01 40 02 02 02");
-$("cmdStop").value  = store.get("cmdStop2", "01 40 02 02 03");
+$("cmdStart").value = store.get("cmdStart3", "01 40 02 02 01");
+$("cmdStop").value  = store.get("cmdStop3", "01 40 02 02 02");
 $("pin").value      = store.get("pin", "love");
 $("pin").onchange = () => store.set("pin", $("pin").value);
-$("cmdStart").onchange = () => store.set("cmdStart2", $("cmdStart").value);
-$("cmdStop").onchange  = () => store.set("cmdStop2",  $("cmdStop").value);
+$("cmdStart").onchange = () => store.set("cmdStart3", $("cmdStart").value);
+$("cmdStop").onchange  = () => store.set("cmdStop3",  $("cmdStop").value);
 
 let devStr = store.get("devStr", "");
 if (!/^\d{15}$/.test(devStr)) { devStr = "00"; for (let i = 0; i < 13; i++) devStr += Math.floor(Math.random()*10); store.set("devStr", devStr); }
@@ -250,9 +253,9 @@ function onData(c, chunk){
 }
 
 // ---------- Test-Konsole ----------
-$("p1").onclick = () => $("probe").value = "01 40 02 02 02";
-$("p2").onclick = () => $("probe").value = "01 40 02 02 03";
-$("p3").onclick = () => $("probe").value = "01 40 02 01 01";
+$("p1").onclick = () => $("probe").value = "01 40 02 02 01";
+$("p2").onclick = () => $("probe").value = "01 40 02 02 02";
+$("p3").onclick = () => $("probe").value = "01 40 02 02 03";
 $("pPair").onclick = () => sendPairing(cams[+$("probeCam").value - 1]);
 let finderRunning = false;
 $("finder").onclick = async () => {
@@ -276,6 +279,29 @@ $("finder").onclick = async () => {
   log("=== AUFNAHME-FINDER ENDE ===");
   finderRunning = false; $("finder").disabled = false;
 };
+let cancelFinder = false, stopFinderRunning = false;
+$("cancelFinder").onclick = () => { cancelFinder = true; log("Test wird abgebrochen …"); };
+const waitSec = async (sec, label, b) => { for (let t = sec; t > 0 && !cancelFinder; t--){ b.textContent = `${label} (${t} s)`; await new Promise(r => setTimeout(r, 1000)); } };
+$("stopfinder").onclick = async () => {
+  if (stopFinderRunning || finderRunning) return;
+  const c = cams[+$("probeCam").value - 1];
+  if (!c.ready){ log(`K${c.n}: Nicht verbunden.`); return; }
+  stopFinderRunning = true; cancelFinder = false; $("stopfinder").disabled = true;
+  const b = $("banner"); b.style.display = "block"; $("cancelFinder").style.display = "block";
+  log("=== STOPP-FINDER START: Kamera im Videomodus, nichts läuft ===");
+  log("=== START-BEFEHL 02 02 01 ===");
+  await runCmd(c, "01 40 02 02 01");
+  await waitSec(15, "Aufnahme sollte jetzt laufen", b);
+  const steps = [[2,2,2],[2,2,3],[2,3,1],[2,3,0],[2,2,1]];
+  for (let i = 0; i < steps.length && !cancelFinder; i++){
+    log(`=== STOPP-KANDIDAT ${i+1}/${steps.length}: Befehl ${hex(steps[i])} ===`);
+    await runCmd(c, hex([0x01,0x40,...steps[i]]));
+    await waitSec(10, `Kandidat ${i+1}/${steps.length} gesendet – läuft die Aufnahme noch?`, b);
+  }
+  b.style.display = "none"; $("cancelFinder").style.display = "none";
+  log(cancelFinder ? "=== STOPP-FINDER ABGEBROCHEN ===" : "=== STOPP-FINDER ENDE ===");
+  stopFinderRunning = false; $("stopfinder").disabled = false;
+};
 let autoRunning = false;
 $("auto").onclick = async () => {
   if (autoRunning) return;
@@ -298,8 +324,8 @@ $("auto").onclick = async () => {
   autoRunning = false; $("auto").disabled = false;
 };
 $("probeSend").onclick = () => runCmd(cams[+$("probeCam").value - 1], $("probe").value);
-$("saveStart").onclick = () => { $("cmdStart").value = $("probe").value; store.set("cmdStart2", $("probe").value); log("Start-Befehl gespeichert."); };
-$("saveStop").onclick  = () => { $("cmdStop").value = $("probe").value; store.set("cmdStop2", $("probe").value); log("Stopp-Befehl gespeichert."); };
+$("saveStart").onclick = () => { $("cmdStart").value = $("probe").value; store.set("cmdStart3", $("probe").value); log("Start-Befehl gespeichert."); };
+$("saveStop").onclick  = () => { $("cmdStop").value = $("probe").value; store.set("cmdStop3", $("probe").value); log("Stopp-Befehl gespeichert."); };
 $("allStart").onclick = () => Promise.all(cams.filter(c => c.ready).map(c => runCmd(c, $("cmdStart").value)));
 $("allStop").onclick  = () => Promise.all(cams.filter(c => c.ready).map(c => runCmd(c, $("cmdStop").value)));
 
